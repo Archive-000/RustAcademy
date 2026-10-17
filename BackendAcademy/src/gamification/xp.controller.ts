@@ -1,53 +1,58 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swgger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
-import {
-  PublishXpEventDto,
-  XpHistoryQueryDto,
-  XP_AWARD_POLICY,
-  XP_HISTORY_DEFAULT_LIMIT,
-  XP_HISTORY_MAX_LIMIT,
-  XP_HISTORY_CURSOR_MAX_LENGTH,
-  XP_HISTORY_CURSOR_PATTERN,
-} from './dto/publish-xp-event.dto';
+import { PublishXpEventDto, XP_AWARD_POLICY } from './dto/publish-xp-event.dto';
 import { XpService } from './xp.service';
 
-function encodeCursor(offset: number): string {
-  return Buffer.from(String(offset), 'utf-8').toString('base64');
+export const XP_HISTORY_DEFAULT_LIMIT = 20;
+export const XP_HISTORY_MAX_LIMIT = 100;
+
+export interface XpHistoryQuery {
+  limit?: number | string;
+  cursor?: string;
 }
 
-function decodeCursor(cursor: string): number | null {
-  if (!cursor || cursor.length > XP_HISTORY_CURSOR_MAX_LENGTH) {
-    return null;
-  }
-  if (!XP_HISTORY_CURSOR_PATTERN.test(cursor)) {
-    return null;
-  }
-  const raw = Buffer.from(cursor, 'base64').toString('utf-8');
-  if (!/^[0-9]+$/.test(raw)) {
-    return null;
-  }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value)) {
-    return null;
-  }
-  return value;
+export interface XpHistoryResult {
+  items: unknown[];
+  limit: number;
+  nextCursor: string | null;
 }
 
-function resolveLimit(limit?: number): number {
-  if (limit === undefined) {
+function parseLimit(raw: number | string | undefined): number {
+  if (raw === undefined) {
     return XP_HISTORY_DEFAULT_LIMIT;
   }
-  if (!Number.isInteger(limit) || limit < 1) {
+
+  const limit = typeof raw === 'number' ? raw : Number(raw);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > XP_HISTORY_MAX_LIMIT) {
     throw new BadRequestException({
-      error: '"limit" must be a positive integer.',
+      error: `"limit" must be an integer between 1 and ${XP_HISTORY_MAX_LIMIT}.`,
       code: 'INVALID_XP_HISTORY_LIMIT',
     });
   }
-  return Math.min(limit, XP_HISTORY_MAX_LIMIT);
+
+  return limit;
 }
 
-@ApiTags('xp')
+function decodeCursor(cursor: string | undefined): number {
+  if (cursor === undefined || cursor === '') {
+    return 0;
+  }
+
+  const offset = Number(cursor);
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new BadRequestException({
+      error: '"cursor" must be a non-negative integer offset.',
+      code: 'INVALID_XP_HISTORY_CURSOR',
+    });
+  }
+
+  return offset;
+}
+
+@Tags('xp')
 @Controller('v1/xp')
 export class XpController {
   constructor(
@@ -75,25 +80,21 @@ export class XpController {
     return { accepted: true, eventId: event.eventId, totalXp: this.xpService.getBalance(event.userId) };
   }
 
-  @Get(':userId')
-  @ApiOperation({ summary: 'Get XP totals and bounded history for a user' })
-  getTotals(@Param('userId') userId: string, @Query() query: XpHistoryQueryDto) {
-    const limit = resolveLimit(query.limit);
+  @Get(':userId/history')
+  @ApiOperation({ summary: 'Get a bounded, paginated XP ledge history' })
+  getHistory(@Param('userId') userId: string, @Query() query: XpHistoryQuery): XpHistoryResult {
+    const limit = parseLimit(query.limit);
+    const offset = decodeCursor(query.cursor);
     const ledger = this.xpService.getLedger(userId);
-    let endExclusive = ledger.length;
-    if (query.cursor) {
-      const decoded = decodeCursor(query.cursor);
-      if (decoded === null || decoded < 0 || decoded > ledger.length) {
-        throw new BadRequestException({
-          error: 'Invalid cursor.',
-          code: 'INVALID_XP_HISTORY_CURSOR',
-        });
-      }
-      endExclusive = decoded;
-    }
-    const startExclusive = Math.max(0, endExclusive - limit);
-    const page = ledger.slice(startExclusive, endExclusive).reverse();
-    const nextCursor = startExclusive > 0 ? encodeCursor(startExclusive) : null;
-    return { totals: this.xpService.getTotals(userId), items: page, nextCursor: nextCursor, limit };
+    const items = ledger.slice(offset, offset + limit);
+    const nextOffset = offset + items.length;
+    const nextCursor = nextOffset < ledger.length ? String(nextOffset) : null;
+
+    return { items, limit, nextCursor };
+  }
+
+  @Get(':userId')
+  getTotals(@Param('userId') userId: string) {
+    return this.xpService.getTotals(userId);
   }
 }

@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
-import { XpController } from './xp.controller';
+import { XpController, XP_HISTORY_DEFAULT_LIMIT, XP_HISTORY_MAX_LIMIT } from './xp.controller';
 import { XpService } from './xp.service';
 
 describe('XpService', () => {
@@ -59,7 +59,7 @@ describe('XpService', () => {
     });
   });
 
-  describe('XP history bounds and continuation', () => {
+  describe('XP history queries', () => {
     let bus: DomainEventBus;
     let service: XpService;
     let controller: XpController;
@@ -69,48 +69,81 @@ describe('XpService', () => {
       service = new XpService(bus);
       service.onModuleInit();
       controller = new XpController(bus, service);
-      for (let i = 0; i < 25; i++) {
-        bus.publish({ eventId: `evt-${i}`, userId: 'user-1', type: 'streak.day' });
-      }
     });
 
     afterEach(() => service.onModuleDestroy());
 
-    it('defaults to a bounded page size', () => {
-      const result = controller.getTotals('user-1', {});
-      expect(result.limit).toBe(20);
-      expect(result.items).toHaveLength(20);
-      expect(result.nextCursor).not.toBeNull();
+    function seed(count: number) {
+      for (let i = 0; i < count; i++) {
+        bus.publish({ eventId: `evt-${i}`, userId: 'user-1', type: 'task.passed' });
+      }
+    }
+
+    it('defaults to a bounded result size', () => {
+      seed(XP_HISTORY_DEFAULT_LIMIT + 5);
+
+      const result = controller.getHistory('user-1', {});
+
+      expect(result.items).toHaveLength(XP_HISTORY_DEFAULT_LIMIT);
+      expect(result.limit).toBe(XP_HISTORY_DEFAULT_LIMIT);
+      expect(result.nextCursor).toBe(String(XP_HISTORY_DEFAULT_LIMIT));
     });
 
-    it('caps an oversized requested limit', () => {
-      const result = controller.getTotals('user-1', { limit: 1000 });
-      expect(result.limit).toBe(100);
-      expect(result.items).toHaveLength(25);
+    it('honors a valid limit', () => {
+      seed(10);
+
+      const result = controller.getHistory('user-1', { limit: '3' });
+
+      expect(result.items).toHaveLength(3);
+      expect(result.limit).toBe(3);
+      expect(result.nextCursor).toBe('3');
     });
 
-    it('returns stable continuation pages without duplicates', () => {
-      const first = controller.getTotals('user-1', { limit: 10 });
-      const second = controller.getTotals('user-1', { limit: 10, cursor: first.nextCursor! });
-      const third = controller.getTotals('user-1', { limit: 10, cursor: second.nextCursor! });
-      const all = [...first.items, ...second.items, ...third.items];
-      expect(all).toHaveLength(25);
-      expect(new Set(all.map((e) => e.eventId)).size).toBe(25);
+    it.each([
+      ['zero', 0],
+      ['negative', -1],
+      ['fractional', 2.5],
+      ['above the maximum', XP_HISTORY_MAX_LIMIT + 1],
+      ['not a number', 'abc'],
+    ] as const)('rejects an invalid limit (%s)', (_description, limit) => {
+      expect(() => controller.getHistory('user-1', { limit })).toThrow(BadRequestException);
+    });
+
+    it.each([
+      ['negative', '-1'],
+      ['fractional', '1.5'],
+      ['non-numeric', 'cursor'],
+    ] as const)('rejects an invalid cursor (%s)', (_description, cursor) => {
+      expect(() => controller.getHistory('user-1', { cursor })).toThrow(BadRequestException);
+    });
+
+    it('paginates with a stable cursor without duplicates or gaps', () => {
+      seed(7);
+
+      const first = controller.getHistory('user-1', { limit: 3 });
+      expect(first.items).toHaveLength(3);
+      expect(first.nextCursor).toBe('3');
+
+      const second = controller.getHistory('user-1', { limit: 3, cursor: first.nextCursor });
+      expect(second.items).toHaveLength(3);
+      expect(second.nextCursor).toBe('6');
+
+      const third = controller.getHistory('user-1', { limit: 3, cursor: second.nextCursor });
+      expect(third.items).toHaveLength(1);
       expect(third.nextCursor).toBeNull();
+
+      const ids = [...first.items, ...second.items, ...third.items].map(
+        (item) => (item as { eventId: string }).eventId,
+      );
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toHaveLength(7);
     });
 
-    it('rejects an invalid cursor', () => {
-      expect(() => controller.getTotals('user-1', { cursor: 'not-a-cursor' })).toThrow(BadRequestException);
-    });
+    it('returns an empty page with a null cursor when the ledge is empty', () => {
+      const result = controller.getHistory('user-1', {});
 
-    it('rejects a cursor that exceeds the maximum length', () => {
-      expect(() =>
-        controller.getTotals('user-1', { cursor: 'a'.repeat(257) }),
-      ).toThrow(BadRequestException);
-    });
-
-    it('rejects a non-positive limit', () => {
-      expect(() => controller.getTotals('user-1', { limit: 0 })).toThrow(BadRequestException);
+      expect(result.items).toHaveLength(0);
+      expect(result.nextCursor).toBeNull();
     });
   });
 });
