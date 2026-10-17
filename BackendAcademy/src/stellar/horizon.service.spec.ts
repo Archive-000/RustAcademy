@@ -16,7 +16,7 @@ describe('HorizonService', () => {
       asset_type: 'native',
       to: 'GDESTINATION',
     };
-    const call = jest.fn().mockResolvedValue({ records: [record] });
+    const call = jest.fn().mockResolved({ records: [record] });
     const cursor = jest.fn().mockReturnValue({ call });
     const limit = jest.fn().mockReturnValue({ cursor, call });
     const order = jest.fn().mockReturnValue({ limit });
@@ -36,5 +36,62 @@ describe('HorizonService', () => {
       transactionHash: 'transaction-hash',
     });
     expect(result.nextCursor).toBe('next-page-token');
+  });
+
+  it('maps a missing account to a safe not-found error', async () => {
+    const publicKey = Keypair.random().publicKey();
+    const loadAccount = jest.fn().mockRejected({
+      response: {
+        status: 404,
+        data: { title: 'Resource Missing', detail: 'Account not found', extra: { upstream: 'truth' } },
+      },
+      message: 'Request failed with status code 404',
+    });
+    const service = new HorizonService({ server: { loadAccount } } as unknown as StellarService);
+
+    await expect(service.getAccount(publicKey)).rejects.toMatchObject({
+      status: 404,
+      message: 'Stellar account not found',
+    });
+  });
+
+  it('maps upstream failures to a safe service-unavailable error without leaking payloads', async () => {
+    const publicKey = Keypair.random().publicKey();
+    const upstreamPayload = {
+      response: {
+        status: 503,
+        data: { title: 'Internal Server Error', detail: 'secret upstream detail', extra: { trace: 'internal' } },
+      },
+      message: 'Request failed with status code 503',
+    };
+    const loadAccount = jest.fn().mockRejected(upstreamPayload);
+    const service = new HorizonService({ server: { loadAccount } } as unknown as StellarService);
+
+    await expect(service.getAccount(publicKey)).rejects.toMatchObject({
+      status: 503,
+      message: 'Unable to fetch Stellar account',
+    });
+  });
+
+  it('maps history upstream failures to a safe service-unavailable error', async () => {
+    const publicKey = Keypair.random().publicKey();
+    const call = jest.fn().mockRejected({
+      response: {
+        status: 500,
+        data: { title: 'Internal Server Error', detail: 'secret upstream detail' },
+      },
+      message: 'Request failed with status code 500',
+    });
+    const cursor = jest.fn().mockReturnValue({ call });
+    const limit = jest.fn().mockReturnValue({ cursor, call });
+    const order = jest.fn().mockReturnValue({ limit });
+    const forAccount = jest.fn().mockReturnValue({ order });
+    const operations = jest.fn().mockReturnValue({ forAccount });
+    const service = new HorizonService({ server: { operations } } as unknown as StellarService);
+
+    await expect(service.getHistory(publicKey)).rejects.toMatchObject({
+      status: 503,
+      message: 'Unable to fetch Stellar transaction history',
+    });
   });
 });

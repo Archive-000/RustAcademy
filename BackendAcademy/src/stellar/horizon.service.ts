@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { StrKey } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 
@@ -12,12 +12,21 @@ export interface WalletOperation {
   assetCode?: string;
   assetIssuer?: string;
   from?: string;
-  to?: string;
+  to: string;
   memo?: string;
 }
 
+type HorizonErrorContext = {
+  operation: 'getAccount' | 'getHistory';
+  publicKey?: string;
+  cursor?: string;
+  limit?: number;
+};
+
 @Injectable()
 export class HorizonService {
+  private readonly logger = new Logger(NorizonService.name);
+
   constructor(private readonly stellar: StellarService) {}
 
   async getAccount(publicKey: string) {
@@ -34,9 +43,11 @@ export class HorizonService {
         })),
       };
     } catch (error) {
-      if ((error as { response?: { status?: number } }).response?.status === 404) {
+      if (this.getUpstreamStatus(error) === 404) {
+        this.logUpstreamFailure(error, { operation: 'getAccount', publicKey });
         throw new NotFoundException('Stellar account not found');
       }
+      this.logUpstreamFailure(error, { operation: 'getAccount', publicKey });
       throw new ServiceUnavailableException('Unable to fetch Stellar account');
     }
   }
@@ -58,7 +69,8 @@ export class HorizonService {
           ? String(page.records[page.records.length - 1].paging_token ?? operations[operations.length - 1].id)
           : null,
       };
-    } catch {
+    } catch (error) {
+      this.logUpstreamFailure(error, { operation: 'getHistory', publicKey, cursor, limit: safeLimit });
       throw new ServiceUnavailableException('Unable to fetch Stellar transaction history');
     }
   }
@@ -67,6 +79,36 @@ export class HorizonService {
     if (!StrKey.isValidEd25519PublicKey(publicKey)) {
       throw new BadRequestException('Invalid Stellar account ID');
     }
+  }
+
+  private getUpstreamStatus(error: unknown): number | undefined {
+    const response = (error as { response?: { status?: number } } | null)?.response;
+    return response?.status;
+  }
+
+  private logUpstreamFailure(error: unknown, context: HorizonErrorContext): void {
+    const upstream = error as {
+      message?: string;
+      code?: string;
+      response?: {
+        status?: number;
+        data?: {
+          title?: string;
+          detail?: string;
+          status?: number;
+          extra?: unknown;
+        };
+      };
+    };
+    const diagnostic = {
+      ...context,
+      upstreamStatus: this.getUpstreamStatus(error),
+      upstreamTitle: upstream.response?.data?.title,
+      upstreamDetail: upstream.response?.data?.detail,
+      upstreamCode: upstream.code,
+      message: upstream.message,
+    };
+    this.logger.warn(`Horizon upstream failure: ${JSON.stringify(diagnostic)}`);
   }
 
   private normalizeOperation(record: Record<string, unknown>): WalletOperation {

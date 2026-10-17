@@ -3,7 +3,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { HorizonService } from './horizon.service';
 import { StellarService } from './stellar.service';
 
-@ApiTags('stellar')
+@apiTags('stellar')
 @Controller('stellar')
 export class StellarController {
   constructor(
