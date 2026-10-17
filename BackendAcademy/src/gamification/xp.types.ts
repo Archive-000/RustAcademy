@@ -18,3 +18,9 @@ export interface XpLedgerEntry extends XpEvent {
   /** UTC ISO 8601 timestamp of when the entry was awarded. */
   awardedAt: string;
 }
+
+export interface XpApplyResult {
+  applied: boolean;
+  duplicate: boolean;
+  entry?: XpLedgerEntry;
+}

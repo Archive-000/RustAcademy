@@ -21,11 +21,20 @@ describe('XpService', () => {
     service.onModuleDestroy();
   });
 
+  it('applies distinct valid events normally', () => {
   it('normalizes an event time with a non-UTC offset to UTC', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
 
+    bus.publish({ eventId: 'evt-1', userId: 'user-1', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-2', userId: 'user-1', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-3', userId: 'user-2', type: 'task.passed' });
+
+    expect(service.getBalance('user-1')).toBe(20);
+    expect(service.getLedger('user-1')).toHaveLength(2);
+    expect(service.getBalance('user-2')).toBe(10);
+    expect(service.getLedger('user-2')).toHaveLength(1);
     bus.publish({
       eventId: 'evt-offset',
       userId: 'user-offset',
@@ -39,11 +48,22 @@ describe('XpService', () => {
     service.onModuleDestroy();
   });
 
+  it('ignores replayed event IDs but still applies new ones', () => {
   it('defaults a missing event time to a UTC timestamp', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
 
+    bus.publish({ eventId: 'evt-1', userId: 'user-1', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-1', userId: 'user-1', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-2', userId: 'user-1', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-2', userId: 'user-1', type: 'task.passed' });
+
+    expect(service.getBalance('user-1')).toBe(20);
+    expect(service.getLedger('user-1')).toHaveLength(2);
+    expect(service.getTotals('user-1').totalXp).toBe(20);
+
+    service.onModuleDestroy();
     bus.publish({ eventId: 'evt-default', userId: 'user-default', type: 'task.passed' });
 
     const [award] = service.getLedger('user-default');
