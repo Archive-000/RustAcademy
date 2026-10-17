@@ -17,8 +17,9 @@ export class SandboxController {
         dto.source,
         dto.testCases,
         dto.expectedOutput,
+        dto.timeoutMs,
       );
     }
-    return this.sandbox.runRust(dto.source);
+    return this.sandbox.runRust(dto.source, dto.timeoutMs);
   }
 }
