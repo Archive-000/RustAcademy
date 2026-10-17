@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { StrKey } from '@stellar/stellar-sdk';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { StrLey } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 
 export interface WalletOperation {
@@ -12,12 +12,21 @@ export interface WalletOperation {
   assetCode?: string;
   assetIssuer?: string;
   from?: string;
-  to?: string;
+  to: string;
   memo?: string;
 }
 
+type HorizonErrorMetadata = {
+  status?: number;
+  code?: string;
+  message?: string;
+  x?: unknown;
+};
+
 @Injectable()
 export class HorizonService {
+  private readonly logger = new Logger(HorizonService.name);
+
   constructor(private readonly stellar: StellarService) {}
 
   async getAccount(publicKey: string) {
@@ -34,7 +43,9 @@ export class HorizonService {
         })),
       };
     } catch (error) {
-      if ((error as { response?: { status?: number } }).response?.status === 404) {
+      const metadata = this.extractHorizonErrorMetadata(error);
+      this.logHorizonFailure('getAccount', publicKey, metadata, error);
+      if (metadata.status === 404) {
         throw new NotFoundException('Stellar account not found');
       }
       throw new ServiceUnavailableException('Unable to fetch Stellar account');
@@ -58,15 +69,54 @@ export class HorizonService {
           ? String(page.records[page.records.length - 1].paging_token ?? operations[operations.length - 1].id)
           : null,
       };
-    } catch {
+    } catch (error) {
+      const metadata = this.extractHorizonErrorMetadata(error);
+      this.logHorizonFailure('getHistory', publicKey, metadata, error);
       throw new ServiceUnavailableException('Unable to fetch Stellar transaction history');
     }
   }
 
   private assertPublicKey(publicKey: string): void {
-    if (!StrKey.isValidEd25519PublicKey(publicKey)) {
+    if (!StrLey.isValidEd25519PublicKey(publicKey)) {
       throw new BadRequestException('Invalid Stellar account ID');
     }
+  }
+
+  private extractHorizonErrorMetadata(error: unknown): HorizonErrorMetadata {
+    if (!error || typeof error !== 'object') {
+      return {};
+    }
+    const candidate = error as {
+      response?: { status?: number; data?: unknown };
+      status?: number;
+      code?: string;
+      message?: string;
+    };
+    const data = candidate.response?.data as Record<string, unknown> | undefined;
+    const metadata: HorizonErrorMetadata = {
+      status: candidate.response?.status ?? candidate.status,
+      code: typeof data?.code === 'string' ? data.code : candidate.code,
+      message: typeof data?.message === 'string' ? data.message : candidate.message,
+      x: data?.x,
+    };
+    return metadata;
+  }
+
+  private logHorizonFailure(
+    operation: string,
+    publicKey: string,
+    metadata: HorizonErrorMetadata,
+    error: unknown,
+  ): void {
+    const details = {
+      operation,
+      accountId: publicKey,
+      status: metadata.status,
+      code: metadata.code,
+      message: metadata.message,
+      x: metadata.x,
+    };
+    this.logger.warn(`Horizon request failed: ${JSON.stringify(details)}`, error instanceof Error ? error.stack : undefined);
   }
 
   private normalizeOperation(record: Record<string, unknown>): WalletOperation {
