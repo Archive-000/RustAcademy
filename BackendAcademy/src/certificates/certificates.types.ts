@@ -71,5 +71,16 @@ export interface CertificateEligibilityCheck {
   tasks: TaskResult[];
   /** Human-readable explanations for an ineligible verdict; empty when eligible. */
   reasons: string[];
+  /** Set once when the learner first becomes eligible; null until then. */
+  readonly issuedAt: string | null;
   checkedAt: string;
+}
+
+/** Public fields returned when checking whether a certificate is valid. */
+export interface CertificateVerificationDetails {
+  verified: boolean;
+  courseId: string;
+  status: CertificateEligibilityCheck['status'];
+  issuedAt: string | null;
+  finalScore: number | null;
 }

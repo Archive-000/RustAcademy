@@ -1,5 +1,22 @@
-import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, IsISO8601 } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { XpEventType } from '../xp.types';
+
+export const XP_AWARD_POLICY: Readonly<Record<XpEventType, number>> = {
+  'task.passed': 10,
+  'course.completed': 100,
+  'streak.day': 5,
+  'contribution.created': 25,
+};
 
 export class PublishXpEventDto {
   @IsString()
@@ -12,6 +29,12 @@ export class PublishXpEventDto {
 
   @IsIn(['task.passed', 'course.completed', 'streak.day', 'contribution.created'])
   type: XpEventType;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(100)
+  amount?: number;
 
   @IsOptional()
   @IsISO8601()

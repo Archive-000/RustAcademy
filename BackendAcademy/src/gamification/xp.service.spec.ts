@@ -1,4 +1,6 @@
+import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
+import { XpController } from './xp.controller';
 import { XpService } from './xp.service';
 
 describe('XpService', () => {
@@ -48,5 +50,42 @@ describe('XpService', () => {
     expect(award.occurredAt).toBe(new Date(award.occurredAt).toISOString());
 
     service.onModuleDestroy();
+  describe('XP award amount validation', () => {
+    let bus: DomainEventBus;
+    let service: XpService;
+    let controller: XpController;
+
+    beforeEach(() => {
+      bus = new DomainEventBus();
+      service = new XpService(bus);
+      service.onModuleInit();
+      controller = new XpController(bus, service);
+    });
+
+    afterEach(() => service.onModuleDestroy());
+
+    it.each([
+      ['streak.day', 5],
+      ['task.passed', 10],
+      ['contribution.created', 25],
+      ['course.completed', 100],
+    ] as const)('accepts configured award %s = %i XP', (type, amount) => {
+      expect(
+        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }),
+      ).toMatchObject({ accepted: true });
+      expect(service.getBalance('user-1')).toBe(amount);
+    });
+
+    it.each([
+      ['negative amount', 'task.passed', -1],
+      ['above policy maximum', 'course.completed', 101],
+      ['fractional amount', 'task.passed', 10.5],
+      ['amount that conflicts with event policy', 'streak.day', 10],
+    ] as const)('rejects %s', (_description, type, amount) => {
+      expect(() =>
+        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }),
+      ).toThrow(BadRequestException);
+      expect(service.getBalance('user-1')).toBe(0);
+    });
   });
 });

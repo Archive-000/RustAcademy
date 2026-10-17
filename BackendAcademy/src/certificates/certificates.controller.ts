@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CertificatesService } from './certificates.service';
+import { CertificateVerificationDetails } from './certificates.types';
 import { RecordTaskResultDto } from './dto/record-task-result.dto';
 import { RegisterCertificateCriteriaDto } from './dto/register-certificate-criteria.dto';
 
@@ -40,6 +41,22 @@ export class CertificatesController {
   @ApiOperation({ summary: 'Check whether a learner is eligible for a course certificate' })
   checkEligibility(@Param('userId') userId: string, @Param('courseId') courseId: string) {
     return this.certificates.checkEligibility(userId, courseId);
+  }
+
+  @Get('verify/users/:userId/courses/:courseId')
+  @ApiOperation({ summary: 'Return public certificate verification details' })
+  verifyCertificate(
+    @Param('userId') userId: string,
+    @Param('courseId') courseId: string,
+  ): CertificateVerificationDetails {
+    const check = this.certificates.checkEligibility(userId, courseId);
+    return {
+      verified: check.eligible,
+      courseId: check.courseId,
+      status: check.status,
+      issuedAt: check.issuedAt,
+      finalScore: check.finalScore,
+    };
   }
 
   @Get('courses/:courseId/eligible-learners')
