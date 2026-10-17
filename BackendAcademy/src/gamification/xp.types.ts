@@ -16,3 +16,9 @@ export interface XpLedgerEntry extends XpEvent {
   points: number;
   awardedAt: string;
 }
+
+export interface XpApplyResult {
+  applied: boolean;
+  duplicate: boolean;
+  entry?: XpLedgerEntry;
+}

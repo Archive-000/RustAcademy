@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Subscription } from 'rxjs';
+
 import { DomainEventBus } from './domain-event-bus';
 import { XpEvent, XpEventType, XpLedgerEntry } from './xp.types';
 
@@ -13,6 +14,7 @@ const XP_BY_EVENT: Record<XpEventType, number> = {
 @Injectable()
 export class XpService implements OnModuleInit, OnModuleDestroy {
   private readonly ledger = new Map<string, XpLedgerEntry>();
+  private readonly processedEventIds = new Set<string>();
   private subscription?: Subscription;
 
   constructor(private readonly eventBus: DomainEventBus) {}
@@ -26,7 +28,7 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
   }
 
   award(event: XpEvent): XpLedgerEntry | null {
-    if (this.ledger.has(event.eventId)) {
+    if (this.processedEventIds.has(event.eventId)) {
       return null;
     }
 
@@ -36,6 +38,7 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
       occurredAt: event.occurredAt ?? new Date().toISOString(),
       awardedAt: new Date().toISOString(),
     };
+    this.processedEventIds.add(event.eventId);
     this.ledger.set(event.eventId, entry);
     return entry;
   }
