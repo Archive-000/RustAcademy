@@ -13,7 +13,7 @@ import {
 
 export const SUPPORTED_SANDBOX_LANGUAGES = ["rust"] as const;
 
-export type SandboxLanguage = (typeof SUPPORTED_SANDABOX_LANGUAGES)[number];
+export type SandboxLanguage = (typeof SUPPORTED_SANDBOX_LANGUAGES)[number];
 
 export class RunCodeDto {
   @IsString()

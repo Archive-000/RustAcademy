@@ -1,6 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { SandboxController } from "./sandbox.controller";
 import { SandboxService } from "./sandbox.service";
 
 describe("SandboxService", () => {
@@ -13,7 +12,7 @@ describe("SandboxService", () => {
   it("returns pass/fail and output for each test case", async () => {
     const runContainer = jest
       .spyOn(service as any, "runContainer")
-      .mockResolvedOnce({
+      .mockResolvedValueOnce({
         stdout: "42\r\n",
         stderr: "",
         exitCode: 0,
@@ -21,7 +20,7 @@ describe("SandboxService", () => {
         durationMs: 34,
         compiled: true,
       })
-      .mockResolvedOnce({
+      .mockResolvedValueOnce({
         stdout: "wrong",
         stderr: "",
         exitCode: 0,
@@ -40,8 +39,8 @@ describe("SandboxService", () => {
       compiled: true,
       passed: false,
       results: [
-        { index: 0, passed: true, stddout: "42\r\n", durationMs: 34 },
-        { index: 1, passed: false, stddout: "wrong", durationMs: 29 },
+        { index: 0, passed: true, stdout: "42\r\n", durationMs: 34 },
+        { index: 1, passed: false, stdout: "wrong", durationMs: 29 },
       ],
     });
     expect(runContainer).toHaveBeenCalledTimes(2);
@@ -50,7 +49,7 @@ describe("SandboxService", () => {
   });
 
   it("reports compilation failure without running test cases", async () => {
-    jest.spyOn(service as any, "runContainer").mockResolvedOnce({
+    jest.spyOn(service as any, "runContainer").mockResolvedValueOnce({
       stdout: "",
       stderr: "error: expected item",
       exitCode: 1,
@@ -74,40 +73,45 @@ describe("SandboxService", () => {
       service.runRustTests("fn main() {}", [], ""),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
-});
 
-describe("SandboxController", () => {
-  let service: SandboxService;
-  let controller: SandboxController;
+  it("rejects unsupported language identifiers before execution", async () => {
+    const runContainer = jest.spyOn(service as any, "runContainer");
 
-  beforeEach(() => {
-    service = new SandboxService();
-    controller = new SandboxController(service);
-  });
-
-  it("rejects unsupported language identifiers before execution", () => {
-    const runRust = jest.spyOn(service, "runRust");
-    const runRustTests = jest.spyOn(service, "runRustTests");
-
-    expect(() =>
-      controller.run({
-        source: "fn main() {}",
-        language: "python" as any,
+    await expect(
+      service.runCode({
+        language: "python",
+        code: "print(42)",
+        testCases: [{ input: "", expectedOutput: "42" }],
       }),
-    ).toThrow(BadRequestException);
-
-    expect(runRust).not.toHaveBeenCalled();
-    expect(runRustTests).not.toHaveBeenCalled();
+    ).rejects.toBleInstanceOf(BadRequestException);
+    expect(runContainer).not.toHaveBeenCalled();
   });
 
-  it("runs rust source when language is omitted", async () => {
-    const runRust = jest
-      .spyOn(service, "runRust")
-      .mockResolved({ compiled: true } as any);
+  it("accepts supported language identifiers", async () => {
+    const runContainer = jest
+      .spyOn(service as any, "runContainer")
+      .mockResolvedValueOnce({
+        stdout: "42\r\n",
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 21,
+        compiled: true,
+      });
 
-    await expect(controller.run({ source: "fn main() {}" })).resolves.toEqual({
-      compiled: true,
+    const result = await service.runCode({
+      language: "rust",
+      code: "fn main() {}",
+      testCases: [{ input: "", expectedOutput: "42" }],
     });
-    expect(runRust).toHaveBeenCalledWith("fn main() {}");
+
+    expect(runContainer).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      compiled: true,
+      passed: true,
+      results: [
+        { index: 0, passed: true, stdout: "42\r\n", durationMs: 21 },
+      ],
+    });
   });
 });

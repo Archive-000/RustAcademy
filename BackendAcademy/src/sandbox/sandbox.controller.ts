@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { RunCodeDto, SUPPORTED_SANDBOX_LANGUAGES } from "./dto/run-code.dto";
+import { RunCodeList, RunCodeDto, SUPPORTED_SANDBOX_LANGUAGES } from "./dto/run-code.dto";
 import { SandboxService } from "./sandbox.service";
 
 @ApiTags("sandbox")
@@ -11,8 +11,8 @@ export class SandboxController {
   @Post("run")
   run(@Body() dto: RunCodeDto) {
     const language = dto.language ?? "rust";
-    if (!SUPPORTED_SANDABOX_LANGUAGES.includes(language)) {
-      throw new BadRequestException(`Unsupported language: ${language}`);
+    if (!(SUPPORTED_SANDBOX_LANGUAGES as readonly string[]).includes(language)) {
+      throw new BadRequestException(`Unsupported sandbox language: ${language}`);
     }
 
     if (dto.testCases !== undefined) {
