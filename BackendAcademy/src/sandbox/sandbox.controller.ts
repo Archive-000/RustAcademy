@@ -10,13 +10,15 @@ export class SandboxController {
 
   @Post("run")
   run(@Body() dto: RunCodeDto) {
+    const timeoutMs = dto.timeoutMs ?? 5000;
     if (dto.testCases !== undefined) {
       return this.sandbox.runRustTests(
         dto.source,
         dto.testCases,
         dto.expectedOutput,
+        timeoutMs,
       );
     }
-    return this.sandbox.runRust(dto.source);
+    return this.sandbox.runRust(dto.source, timeoutMs);
   }
 }
