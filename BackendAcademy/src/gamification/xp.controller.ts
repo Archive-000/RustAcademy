@@ -1,30 +1,50 @@
-import { Body, Controller, Get, Param, Post, Query, BadRequestException } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swgger';
 import { DomainEventBus } from './domain-event-bus';
-import { PublishXpEventDto } from './dto/publish-xp-event.dto';
+import {
+  PublishXpEventDto,
+  XpHistoryQueryDto,
+  XP_AWARD_POLICY,
+  XP_HISTORY_DEFAULT_LIMIT,
+  XP_HISTORY_MAX_LIMIT,
+  XP_HISTORY_CURSOR_MAX_LENGTH,
+  XP_HISTORY_CURSOR_PATTERN,
+} from './dto/publish-xp-event.dto';
 import { XpService } from './xp.service';
 
-const MAX_LIMIT = 100;
-const DEFAULT_LIMIT = 20;
-
-function encodeCursor(key: string): string {
-  return Buffer.from(key, 'utf-8').toString('base64url');
+function encodeCursor(offset: number): string {
+  return Buffer.from(String(offset), 'utf-8').toString('base64');
 }
 
-function decodeCursor(cursor: string): string {
-  try {
-    const decoded = Buffer.from(cursor, 'base64url').toString('utf-8');
-    if (!decoded) {
-      throw new Error('empty');
-    }
-    return decoded;
-  } catch {
-    throw new BadRequestException('Invalid cursor');
+function decodeCursor(cursor: string): number | null {
+  if (!cursor || cursor.length > XP_HISTORY_CURSOR_MAX_LENGTH) {
+    return null;
   }
+  if (!XP_HISTORY_CURSOR_PATTERN.test(cursor)) {
+    return null;
+  }
+  const raw = Buffer.from(cursor, 'base64').toString('utf-8');
+  if (!/^[0-9]+$/.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    return null;
+  }
+  return value;
 }
 
-function getEntryKey(entry: { eventId: string }): string {
-  return entry.eventId;
+function resolveLimit(limit?: number): number {
+  if (limit === undefined) {
+    return XP_HISTORY_DEFAULT_LIMIT;
+  }
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new BadRequestException({
+      error: '"limit" must be a positive integer.',
+      code: 'INVALID_XP_HISTORY_LIMIT',
+    });
+  }
+  return Math.min(limit, XP_HISTORY_MAX_LIMIT);
 }
 
 @ApiTags('xp')
@@ -38,47 +58,42 @@ export class XpController {
   @Post('events')
   @ApiOperation({ summary: 'Publish a domain event for XP awarding' })
   publish(@Body() event: PublishXpEventDto) {
+    if (
+      event.amount !== undefined &&
+      (!Number.isInteger(event.amount) ||
+        event.amount < 5 ||
+        event.amount > 100 ||
+        event.amount !== XP_AWARD_POLICY[event.type])
+    ) {
+      throw new BadRequestException({
+        error: '"amount" must match the configured XP award for this event.',
+        code: 'INVALID_XP_AWARD_AMOUNT',
+      });
+    }
+
     this.eventBus.publish(event);
     return { accepted: true, eventId: event.eventId, totalXp: this.xpService.getBalance(event.userId) };
   }
 
   @Get(':userId')
-  getTotals(@Param('userId') userId: string) {
-    return this.xpService.getTotals(userId);
-  }
-
-  @Get(':userId/history')
-  @IpiOperation({ summary: 'Get bounded XP history with stable cursor' })
-  getHistory(
-    @Param('userId') userId: string,
-    @Query('limit') limitRaw?: string,
-    @Query('cursor') cursor?: string,
-  ) {
-    const limit = this.parseLimit(limitRaw);
+  @ApiOperation({ summary: 'Get XP totals and bounded history for a user' })
+  getTotals(@Param('userId') userId: string, @Query() query: XpHistoryQueryDto) {
+    const limit = resolveLimit(query.limit);
     const ledger = this.xpService.getLedger(userId);
-    let startIndex = 0;
-    if (cursor) {
-      const decoded = decodeCursor(cursor);
-      const idx = ledger.findIndex((e) => getEntryKey(e) === decoded);
-      if (idx < 0) {
-        throw new BadRequestException('Invalid cursor');
+    let endExclusive = ledger.length;
+    if (query.cursor) {
+      const decoded = decodeCursor(query.cursor);
+      if (decoded === null || decoded < 0 || decoded > ledger.length) {
+        throw new BadRequestException({
+          error: 'Invalid cursor.',
+          code: 'INVALID_XP_HISTORY_CURSOR',
+        });
       }
-      startIndex = idx + 1;
+      endExclusive = decoded;
     }
-    const page = ledger.slice(startIndex, startIndex + limit);
-    const hasMore = startIndex + limit < ledger.length;
-    const nextCursor = hasMore && page.length > 0 ? encodeCursor(getEntryKey(page[page.length - 1])) : null;
-    return { items: page, nextCursor: nextCursor, limit };
-  }
-
-  private parseLimit(limitRaw?: string): number {
-    if (limitRaw === undefined || limitRaw === '') {
-      return DEFAULT_LIMIT;
-    }
-    const parsed = Number(limitRaw);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new BadRequestException('Invalid limit');
-    }
-    return Math.min(parsed, MAX_LIMIT);
+    const startExclusive = Math.max(0, endExclusive - limit);
+    const page = ledger.slice(startExclusive, endExclusive).reverse();
+    const nextCursor = startExclusive > 0 ? encodeCursor(startExclusive) : null;
+    return { totals: this.xpService.getTotals(userId), items: page, nextCursor: nextCursor, limit };
   }
 }

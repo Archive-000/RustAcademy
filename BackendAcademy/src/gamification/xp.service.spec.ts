@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
-import { XpService } from './xp.service';
 import { XpController } from './xp.controller';
+import { XpService } from './xp.service';
 
 describe('XpService', () => {
   it('awards an event once when the event is replayed', () => {
@@ -19,74 +19,98 @@ describe('XpService', () => {
 
     service.onModuleDestroy();
   });
-});
 
-describe('XpController history', () => {
-  function setup() {
-    const bus = new DomainEventBus();
-    const service = new XpService(bus);
-    service.onModuleInit();
-    const controller = new XpController(bus, service);
-    return { bus, service, controller };
-  }
+  describe('XP award amount validation', () => {
+    let bus: DomainEventBus;
+    let service: XpService;
+    let controller: XpController;
 
-  function publishMany(bus: DomainEventBus, count: number) {
-    for (let i = 0; i < count; i++) {
-      bus.publish({ eventId: `evt-${i}`, userId: 'user-1', type: 'task.passed' });
-    }
-  }
+    beforeEach(() => {
+      bus = new DomainEventBus();
+      service = new XpService(bus);
+      service.onModuleInit();
+      controller = new XpController(bus, service);
+    });
 
-  it('defaults to a bounded page size', () => {
-    const { bus, controller } = setup();
-    publishMany(bus, 30);
-    const result = controller.getHistory('user-1');
-    expect(result.items).toHaveLength(20);
-    expect(result.limit).toBe(20);
-    expect(result.nextCursor).toBoTruthy();
+    afterEach(() => service.onModuleDestroy());
+
+    it.each([
+      ['streak.day', 5],
+      ['task.passed', 10],
+      ['contribution.created', 25],
+      ['course.completed', 100],
+    ] as const)('accepts configured award %s = %i XP', (type, amount) => {
+      expect(
+        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }),
+      ).toMatchObject({ accepted: true });
+      expect(service.getBalance('user-1')).toBe(amount);
+    });
+
+    it.each([
+      ['negative amount', 'task.passed', -1],
+      ['above policy maximum', 'course.completed', 101],
+      ['fractional amount', 'task.passed', 10.5],
+      ['amount that conflicts with event policy', 'streak.day', 10],
+    ] as const)('rejects %s', (_description, type, amount) => {
+      expect(() =>
+        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }),
+      ).toThrow(BadRequestException);
+      expect(service.getBalance('user-1')).toBe(0);
+    });
   });
 
-  it('clamps limit to the validated maximum', () => {
-    const { bus, controller } = setup();
-    publishMany(bus, 150);
-    const result = controller.getHistory('user-1', '500');
-    expect(result.items).toHaveLength(100);
-    expect(result.limit).toBe(100);
-  });
+  describe('XP history bounds and continuation', () => {
+    let bus: DomainEventBus;
+    let service: XpService;
+    let controller: XpController;
 
-  it('rejects non-integer or non-positive limits', () => {
-    const { controller } = setup();
-    expect(() => controller.getHistory('user-1', '0')).toThrow(BadRequestException);
-    expect(() => controller.getHistory('user-1', 'abc')).toThrow(BadRequestException);
-    expect(() => controller.getHistory('user-1', '1.5')).toThrow(BadRequestException);
-  });
-
-  it('paginates with stable cursors without duplicates or gaps', () => {
-    const { bus, controller } = setup();
-    publishMany(bus, 25);
-    const seen: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = controller.getHistory('user-1', '10', cursor);
-      for (const item of page.items) {
-        seen.push(item.eventId);
+    beforeEach(() => {
+      bus = new DomainEventBus();
+      service = new XpService(bus);
+      service.onModuleInit();
+      controller = new XpController(bus, service);
+      for (let i = 0; i < 25; i++) {
+        bus.publish({ eventId: `evt-${i}`, userId: 'user-1', type: 'streak.day' });
       }
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    expect(seen).toHaveLength(25);
-    expect(new Set(seen).size).toBe(25);
-  });
+    });
 
-  it('rejects an invalid cursor', () => {
-    const { bus, controller } = setup();
-    publishMany(bus, 3);
-    expect(() => controller.getHistory('user-1', '10', 'not-a-cursor')).toThrow(BadRequestException);
-  });
+    afterEach(() => service.onModuleDestroy());
 
-  it('returns null nextCursor on the last page', () => {
-    const { bus, controller } = setup();
-    publishMany(bus, 5);
-    const result = controller.getHistory('user-1', '10');
-    expect(result.items).toHaveLength(5);
-    expect(result.nextCursor).toBeNull();
+    it('defaults to a bounded page size', () => {
+      const result = controller.getTotals('user-1', {});
+      expect(result.limit).toBe(20);
+      expect(result.items).toHaveLength(20);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it('caps an oversized requested limit', () => {
+      const result = controller.getTotals('user-1', { limit: 1000 });
+      expect(result.limit).toBe(100);
+      expect(result.items).toHaveLength(25);
+    });
+
+    it('returns stable continuation pages without duplicates', () => {
+      const first = controller.getTotals('user-1', { limit: 10 });
+      const second = controller.getTotals('user-1', { limit: 10, cursor: first.nextCursor! });
+      const third = controller.getTotals('user-1', { limit: 10, cursor: second.nextCursor! });
+      const all = [...first.items, ...second.items, ...third.items];
+      expect(all).toHaveLength(25);
+      expect(new Set(all.map((e) => e.eventId)).size).toBe(25);
+      expect(third.nextCursor).toBeNull();
+    });
+
+    it('rejects an invalid cursor', () => {
+      expect(() => controller.getTotals('user-1', { cursor: 'not-a-cursor' })).toThrow(BadRequestException);
+    });
+
+    it('rejects a cursor that exceeds the maximum length', () => {
+      expect(() =>
+        controller.getTotals('user-1', { cursor: 'a'.repeat(257) }),
+      ).toThrow(BadRequestException);
+    });
+
+    it('rejects a non-positive limit', () => {
+      expect(() => controller.getTotals('user-1', { limit: 0 })).toThrow(BadRequestException);
+    });
   });
 });
