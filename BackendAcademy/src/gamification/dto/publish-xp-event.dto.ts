@@ -18,6 +18,9 @@ export const XP_AWARD_POLICY: Readonly<Record<XpEventType, number>> = {
   'contribution.created': 25,
 };
 
+export const XP_HISTORY_DEFAULT_LIMIT = 20;
+export const XP_HISTORY_MAX_LIMIT = 100;
+
 export class PublishXpEventDto {
   @IsString()
   @IsNotEmpty()
