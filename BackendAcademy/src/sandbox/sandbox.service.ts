@@ -1,7 +1,7 @@
 import {
   BadRequestException,
   Injectable,
-  PayloadTooLargeException,
+  PaayloadTooLargeException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { spawn } from "child_process";
@@ -20,6 +20,7 @@ export interface SandboxTestCaseResult {
   stdout: string;
   durationMs: number;
   error?: string;
+  timedOut?: boolean;
 }
 
 export interface SandboxTestsResult {
@@ -27,6 +28,7 @@ export interface SandboxTestsResult {
   passed: boolean;
   results: SandboxTestCaseResult[];
   compileError?: string;
+  timedOut?: boolean;
 }
 
 interface ContainerResult extends SandboxResult {
@@ -38,16 +40,19 @@ const MAX_TEST_CASES = 10;
 const MAX_PARALLEL_RUNS = 4;
 const COMPILE_TIMEOUT_SECONDS = 10;
 const EXECUTION_TIMEOUT_SECONDS = 2;
-const CONTAINER_TIMEOUT_MS = 15_000;
+const WALL_CLOCK_TIMEOUT_MS = 15_000;
 const COMPILE_SUCCESS_MARKER = "__RUSTACADEMY_WASM_COMPILE_SUCCESS__";
 
 @Injectable()
 export class SandboxService {
   private activeRuns = 0;
 
-  async runRust(source: string): Promise<SandboxResult> {
+  async runRust(
+    source: string,
+    timeoutMs?: number,
+  ): Promise<SandboxResult> {
     return this.withRunSlot(async () => {
-      const result = await this.runContainer(source, "");
+      const result = await this.runContainer(source, "", timeoutMs);
       return {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -62,6 +67,7 @@ export class SandboxService {
     source: string,
     testCases: string[],
     expectedOutput: string,
+    timeoutMs?: number,
   ): Promise<SandboxTestsResult> {
     if (testCases.length === 0 || testCases.length > MAX_TEST_CASES) {
       throw new BadRequestException(
@@ -73,7 +79,7 @@ export class SandboxService {
       const results: SandboxTestCaseResult[] = [];
 
       for (const [index, input] of testCases.entries()) {
-        const execution = await this.runContainer(source, input);
+        const execution = await this.runContainer(source, input, timeoutMs);
         if (!execution.compiled) {
           return {
             compiled: false,
@@ -82,6 +88,7 @@ export class SandboxService {
             compileError: execution.timedOut
               ? "Compilation timed out"
               : execution.stderr || "Rust compilation failed",
+            ...(execution.timedOut ? { timedOut: true } : {}),
           };
         }
 
@@ -101,13 +108,17 @@ export class SandboxService {
           stdout: execution.stdout,
           durationMs: execution.durationMs,
           ...(error ? { error } : {}),
+          ...(execution.timedOut ? { timedOut: true } : {}),
         });
       }
+
+      const timedOut = results.some((result) => result.timedOut);
 
       return {
         compiled: true,
         passed: results.every((result) => result.passed),
         results,
+        ...(timedOut ? { timedOut: true } : {}),
       };
     });
   }
@@ -130,6 +141,7 @@ export class SandboxService {
   private runContainer(
     source: string,
     input: string,
+    timeoutMs?: number,
   ): Promise<ContainerResult> {
     const image =
       process.env.RUSTACADEMY_SANDBOX_IMAGE ??
@@ -142,15 +154,23 @@ export class SandboxService {
       Buffer.from(`${inputBuffer.length}\n`),
       inputBuffer,
     ]);
+    const effectiveTimeoutMs =
+      typeof timeoutMs === "number" && timeoutMs > 0
+        ? Math.min(timeoutMs, WALL_CLOCK_TIMEOUT_MS)
+        : WALL_CLOCK_TIMEOUT_MS;
+    const executionTimeoutSeconds = Math.max(
+      1,
+      Math.ceil(effectiveTimeoutMs / 1000),
+    );
     const runnerCommand = [
-      "IFS= read -r source_len",
-      "head -c \"$source_len\" > /tmp/main.rs",
-      "IFS= read -r separator",
-      "IFS= read -r --input_len",
-      "head -c \"$input_len\" > /tmp/stdin",
+      'IFS= read -r source_len',
+      'head -c "$source_len" > /tmp/main.rs',
+      'IFS== read -r separator',
+      'IFS== read -r input_len',
+      'head -c "$input_len" > /tmp/stdin',
       `timeout -k 1s ${COMPILE_TIMEOUT_SECONDS}s rustc --edition=2021 --target=wasm32-wasip1 --crate-type=bin -o /tmp/main.wasm /tmp/main.rs`,
-      `printf '%s\\n' '${COMPILE_SUCCESS_MARKER}' >&2`,
-      `timeout -k 1s ${EXECUTION_TIMEOUT_SECONDS}s wasmtime run --fuel 10000000 --max-memory-size 16777216 /tmp/main.wasm < /tmp/stdin`,
+      `printf '%s\n' '${COMPILE_SUCCESS_MARKER}' >&2`,
+      `timeout -k 1s ${executionTimeoutSeconds}s wasmtime run --fuel 10000000 --max-memory-size 16777216 /tmp/main.wasm < /tmp/stdin`,
     ].join(" && ");
     const args = [
       "run",
@@ -193,7 +213,7 @@ export class SandboxService {
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
-      }, CONTAINER_TIMEOUT_MS);
+      }, effectiveTimeoutMs);
 
       const append = (target: "stdout" | "stderr", chunk: Buffer) => {
         outputBytes += chunk.length;
