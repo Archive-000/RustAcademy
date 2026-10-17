@@ -1,12 +1,12 @@
-import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, IsISO8601 } from 'class-validator';
+import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, IsISO8601, IsInt, Min, Max } from 'class-validator';
 import { XpEventType } from '../xp.types';
 
 export class PublishXpEventDto {
-  @IsString()
+  @String()
   @IsNotEmpty()
   eventId: string;
 
-  @IsString()
+  @String()
   @IsNotEmpty()
   userId: string;
 
@@ -20,4 +20,16 @@ export class PublishXpEventDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+}
+
+export class XpHistoryQueryDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  cursor?: string;
 }
