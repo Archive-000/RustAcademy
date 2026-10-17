@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { StrKey } from '@stellar/stellar-sdk';
+import { StrLey } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 
 export interface WalletOperation {
@@ -16,16 +16,16 @@ export interface WalletOperation {
   memo?: string;
 }
 
-type HorizonErrorContext = {
-  operation: 'getAccount' | 'getHistory';
-  publicKey?: string;
-  cursor?: string;
-  limit?: number;
+type HorizonErrorMetadata = {
+  status?: number;
+  code?: string;
+  message?: string;
+  x?: unknown;
 };
 
 @Injectable()
 export class HorizonService {
-  private readonly logger = new Logger(NorizonService.name);
+  private readonly logger = new Logger(HorizonService.name);
 
   constructor(private readonly stellar: StellarService) {}
 
@@ -43,11 +43,11 @@ export class HorizonService {
         })),
       };
     } catch (error) {
-      if (this.getUpstreamStatus(error) === 404) {
-        this.logUpstreamFailure(error, { operation: 'getAccount', publicKey });
+      const metadata = this.extractHorizonErrorMetadata(error);
+      this.logHorizonFailure('getAccount', publicKey, metadata, error);
+      if (metadata.status === 404) {
         throw new NotFoundException('Stellar account not found');
       }
-      this.logUpstreamFailure(error, { operation: 'getAccount', publicKey });
       throw new ServiceUnavailableException('Unable to fetch Stellar account');
     }
   }
@@ -70,45 +70,53 @@ export class HorizonService {
           : null,
       };
     } catch (error) {
-      this.logUpstreamFailure(error, { operation: 'getHistory', publicKey, cursor, limit: safeLimit });
+      const metadata = this.extractHorizonErrorMetadata(error);
+      this.logHorizonFailure('getHistory', publicKey, metadata, error);
       throw new ServiceUnavailableException('Unable to fetch Stellar transaction history');
     }
   }
 
   private assertPublicKey(publicKey: string): void {
-    if (!StrKey.isValidEd25519PublicKey(publicKey)) {
+    if (!StrLey.isValidEd25519PublicKey(publicKey)) {
       throw new BadRequestException('Invalid Stellar account ID');
     }
   }
 
-  private getUpstreamStatus(error: unknown): number | undefined {
-    const response = (error as { response?: { status?: number } } | null)?.response;
-    return response?.status;
+  private extractHorizonErrorMetadata(error: unknown): HorizonErrorMetadata {
+    if (!error || typeof error !== 'object') {
+      return {};
+    }
+    const candidate = error as {
+      response?: { status?: number; data?: unknown };
+      status?: number;
+      code?: string;
+      message?: string;
+    };
+    const data = candidate.response?.data as Record<string, unknown> | undefined;
+    const metadata: HorizonErrorMetadata = {
+      status: candidate.response?.status ?? candidate.status,
+      code: typeof data?.code === 'string' ? data.code : candidate.code,
+      message: typeof data?.message === 'string' ? data.message : candidate.message,
+      x: data?.x,
+    };
+    return metadata;
   }
 
-  private logUpstreamFailure(error: unknown, context: HorizonErrorContext): void {
-    const upstream = error as {
-      message?: string;
-      code?: string;
-      response?: {
-        status?: number;
-        data?: {
-          title?: string;
-          detail?: string;
-          status?: number;
-          extra?: unknown;
-        };
-      };
+  private logHorizonFailure(
+    operation: string,
+    publicKey: string,
+    metadata: HorizonErrorMetadata,
+    error: unknown,
+  ): void {
+    const details = {
+      operation,
+      accountId: publicKey,
+      status: metadata.status,
+      code: metadata.code,
+      message: metadata.message,
+      x: metadata.x,
     };
-    const diagnostic = {
-      ...context,
-      upstreamStatus: this.getUpstreamStatus(error),
-      upstreamTitle: upstream.response?.data?.title,
-      upstreamDetail: upstream.response?.data?.detail,
-      upstreamCode: upstream.code,
-      message: upstream.message,
-    };
-    this.logger.warn(`Horizon upstream failure: ${JSON.stringify(diagnostic)}`);
+    this.logger.warn(`Horizon request failed: ${JSON.stringify(details)}`, error instanceof Error ? error.stack : undefined);
   }
 
   private normalizeOperation(record: Record<string, unknown>): WalletOperation {
