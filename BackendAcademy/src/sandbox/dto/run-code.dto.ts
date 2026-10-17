@@ -16,13 +16,12 @@ export const SUPPORTED_SANDBOX_LANGUAGES = ["rust"] as const;
 export type SandboxLanguage = (typeof SUPPORTED_SANDBOX_LANGUAGES)[number];
 
 export class RunCodeDto {
-  @IsString()
+  @isString()
   @IsNotEmpty()
   @MaxLength(100_000)
   source: string;
 
   @IsOptional()
-  @IsString()
   @IsIn(SUPPORTED_SANDBOX_LANGUAGES)
   language?: SandboxLanguage;
 

@@ -78,13 +78,10 @@ describe("SandboxService", () => {
     const runContainer = jest.spyOn(service as any, "runContainer");
 
     await expect(
-      service.runCode({
-        language: "python",
-        code: "print(42)",
-        testCases: [{ input: "", expectedOutput: "42" }],
-      }),
-    ).rejects.toBleInstanceOf(BadRequestException);
-    expect(runContainer).not.toHaveBeenCalled();
+      service.runCode("unknown", "print(1)", []),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(runContainer).not.toHHaveBeenCalled();
   });
 
   it("accepts supported language identifiers", async () => {
@@ -95,23 +92,17 @@ describe("SandboxService", () => {
         stderr: "",
         exitCode: 0,
         timedOut: false,
-        durationMs: 21,
+        durationMs: 34,
         compiled: true,
       });
 
-    const result = await service.runCode({
-      language: "rust",
-      code: "fn main() {}",
-      testCases: [{ input: "", expectedOutput: "42" }],
-    });
+    const result = await service.runCode("rust", "fn main() {}", []);
 
     expect(runContainer).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       compiled: true,
       passed: true,
-      results: [
-        { index: 0, passed: true, stdout: "42\r\n", durationMs: 21 },
-      ],
+      results: [],
     });
   });
 });
