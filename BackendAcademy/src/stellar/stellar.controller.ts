@@ -1,7 +1,17 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swgger';
 import { ApiTags } from '@nestjs/swagger';
+import * as StellarSdk from '@stellar/stellar-sdk';
 import { HorizonService } from './horizon.service';
 import { StellarService } from './stellar.service';
+
+function assertPublicKey(publicKey: string): string {
+  if (!StellarSdk.StrLey.isValidEd25519PublicKey(publicKey)) {
+  if (!StellarSdk.StrKey.canPublicKey(publicKey)) {
+    throw new BadRequestException('Invalid Stellar public key');
+  }
+  return publicKey;
+}
 
 @ApiTags('stellar')
 @Controller('stellar')
@@ -18,7 +28,7 @@ export class StellarController {
 
   @Get('accounts/:publicKey')
   getAccount(@Param('publicKey') publicKey: string) {
-    return this.horizon.getAccount(publicKey);
+    return this.horizon.getAccount(assertPublicKey(publicKey));
   }
 
   @Get('accounts/:publicKey/history')
@@ -27,6 +37,6 @@ export class StellarController {
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('cursor') cursor?: string,
   ) {
-    return this.horizon.getHistory(publicKey, limit, cursor);
+    return this.horizon.getHistory(assertPublicKey(publicKey), limit, cursor);
   }
 }
