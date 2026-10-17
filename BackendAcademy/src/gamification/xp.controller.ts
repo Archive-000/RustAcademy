@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
-import { PublishXpEventDto } from './dto/publish-xp-event.dto';
+import { PublishXpEventDto, XP_AWARD_POLICY } from './dto/publish-xp-event.dto';
 import { XpService } from './xp.service';
 
 @ApiTags('xp')
@@ -15,6 +15,19 @@ export class XpController {
   @Post('events')
   @ApiOperation({ summary: 'Publish a domain event for XP awarding' })
   publish(@Body() event: PublishXpEventDto) {
+    if (
+      event.amount !== undefined &&
+      (!Number.isInteger(event.amount) ||
+        event.amount < 5 ||
+        event.amount > 100 ||
+        event.amount !== XP_AWARD_POLICY[event.type])
+    ) {
+      throw new BadRequestException({
+        error: '"amount" must match the configured XP award for this event.',
+        code: 'INVALID_XP_AWARD_AMOUNT',
+      });
+    }
+
     this.eventBus.publish(event);
     return { accepted: true, eventId: event.eventId, totalXp: this.xpService.getBalance(event.userId) };
   }

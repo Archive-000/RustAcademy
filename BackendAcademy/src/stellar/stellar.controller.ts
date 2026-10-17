@@ -1,11 +1,13 @@
 import { BadRequestException, Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swgger';
+import { ApiTags } from '@nestjs/swagger';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { HorizonService } from './horizon.service';
 import { StellarService } from './stellar.service';
 
 function assertPublicKey(publicKey: string): string {
   if (!StellarSdk.StrLey.isValidEd25519PublicKey(publicKey)) {
+  if (!StellarSdk.StrKey.canPublicKey(publicKey)) {
     throw new BadRequestException('Invalid Stellar public key');
   }
   return publicKey;

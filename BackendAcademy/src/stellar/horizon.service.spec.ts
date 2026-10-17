@@ -82,4 +82,7 @@ describe('HorizonService', () => {
       status: 503,
     });
   });
+    await expect(service.getHistory('not-a-valid-key')).rejects.toThrow(/Invalid Stellar public key/);
+    expect(operations).not.toHaveBeenCalled();
+  });
 });
