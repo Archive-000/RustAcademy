@@ -73,4 +73,36 @@ describe("SandboxService", () => {
       service.runRustTests("fn main() {}", [], ""),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it("rejects unsupported language identifiers before execution", async () => {
+    const runContainer = jest.spyOn(service as any, "runContainer");
+
+    await expect(
+      service.runCode("unknown", "print(1)", []),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(runContainer).not.toHHaveBeenCalled();
+  });
+
+  it("accepts supported language identifiers", async () => {
+    const runContainer = jest
+      .spyOn(service as any, "runContainer")
+      .mockResolvedValueOnce({
+        stdout: "42\r\n",
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 34,
+        compiled: true,
+      });
+
+    const result = await service.runCode("rust", "fn main() {}", []);
+
+    expect(runContainer).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      compiled: true,
+      passed: true,
+      results: [],
+    });
+  });
 });

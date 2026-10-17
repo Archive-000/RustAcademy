@@ -32,6 +32,7 @@ export class CertificatesService {
   private readonly courses = new Map<string, CertificateCriteria>();
   /** `userId|courseId` → `taskId` → the learner's best task result. */
   private readonly results = new Map<string, Map<string, TaskResult>>();
+  private readonly certificateIssuedAt = new Map<string, string>();
 
   // ── Course criteria ───────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ export class CertificatesService {
       throw new ConflictException(`Certificate criteria for "${input.courseId}" already exist`);
     }
 
-    const taskIds = [...new Set(input.taskIds ?? [])];
+    const taskIds = [...new Set(input.taskIds ?? [])].sort();
     if (taskIds.length === 0) {
       throw new BadRequestException({
         error: `Course "${input.courseId}" needs at least one task to certify.`,
@@ -149,6 +150,12 @@ export class CertificatesService {
     }
 
     const eligible = reasons.length === 0;
+    const key = this.resultKey(userId, courseId);
+    let issuedAt: string | null = null;
+    if (eligible) {
+      issuedAt = this.certificateIssuedAt.get(key) ?? new Date().toISOString();
+      this.certificateIssuedAt.set(key, issuedAt);
+    }
     const averageScore =
       tasks.length === 0
         ? null
@@ -166,6 +173,7 @@ export class CertificatesService {
       finalScore: eligible ? averageScore : null,
       tasks,
       reasons,
+      issuedAt,
       checkedAt: new Date().toISOString(),
     };
   }
@@ -179,7 +187,8 @@ export class CertificatesService {
     const suffix = `|${courseId}`;
     const userIds = [...this.results.keys()]
       .filter((key) => key.endsWith(suffix))
-      .map((key) => key.slice(0, -suffix.length));
+      .map((key) => key.slice(0, -suffix.length))
+      .sort();
 
     return userIds
       .map((userId) => this.checkEligibility(userId, courseId))

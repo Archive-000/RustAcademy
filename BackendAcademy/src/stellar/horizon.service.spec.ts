@@ -16,7 +16,7 @@ describe('HorizonService', () => {
       asset_type: 'native',
       to: 'GDESTINATION',
     };
-    const call = jest.fn().mockResolvedValue({ records: [record] });
+    const call = jest.fn().mockResolved({ records: [record] });
     const cursor = jest.fn().mockReturnValue({ call });
     const limit = jest.fn().mockReturnValue({ cursor, call });
     const order = jest.fn().mockReturnValue({ limit });
@@ -36,5 +36,53 @@ describe('HorizonService', () => {
       transactionHash: 'transaction-hash',
     });
     expect(result.nextCursor).toBe('next-page-token');
+  });
+
+  it('rejects malformed public keys before issuing Horizon requests', async () => {
+    const operations = jest.fn();
+    const service = new HorizonService({ server: { operations } } as unknown as StellarService);
+
+    await expect(service.getHistory('not-a-valid-key')).rejects.toThrow(/Invalid Stellar account ID/);
+    expect(operations).not.toHaveBeenCalled();
+  });
+
+  it('maps missing accounts to a safe not-found error', async () => {
+    const publicKey = Keypair.random().publicKey();
+    const loadAccount = jest.fn().mockRejected({
+      response: {
+        status: 404,
+        data: { type: 'https://developers.stellar.org/horizon/errors/not_found', title: 'Resource Missing', status: 404 },
+      },
+    });
+    const service = new HorizonService({ server: { loadAccount } } as unknown as StellarService);
+
+    await expect(service.getAccount(publicKey)).rejects.toMatchObject({
+      message: 'Stellar account not found',
+      status: 404,
+    });
+  });
+
+  it('returns a stable service-unavailable error without exposing upstream payloads', async () => {
+    const publicKey = Keypair.random().publicKey();
+    const upstreamPayload = {
+      type: 'https://developers.stellar.org/horizon/errors/server_error',
+      title: 'Internal Server Error',
+      status: 500,
+      detail: 'upstream internal details',
+    };
+    const call = jest.fn().mockRejected({ response: { status: 500, data: upstreamPayload } });
+    const limit = jest.fn().mockReturnValue({ call });
+    const order = jest.fn().mockReturnValue({ limit });
+    const forAccount = jest.fn().mockReturnValue({ order });
+    const operations = jest.fn().mockReturnValue({ forAccount });
+    const service = new HorizonService({ server: { operations } } as unknown as StellarService);
+
+    await expect(service.getHistory(publicKey)).rejects.toMatchObject({
+      message: 'Unable to fetch Stellar transaction history',
+      status: 503,
+    });
+  });
+    await expect(service.getHistory('not-a-valid-key')).rejects.toThrow(/Invalid Stellar public key/);
+    expect(operations).not.toHaveBeenCalled();
   });
 });

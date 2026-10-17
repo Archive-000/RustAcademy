@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
 import { XpController, XP_HISTORY_DEFAULT_LIMIT, XP_HISTORY_MAX_LIMIT } from './xp.controller';
+import { XpController } from './xp.controller';
 import { XpService } from './xp.service';
 
 describe('XpService', () => {
@@ -20,6 +21,36 @@ describe('XpService', () => {
     service.onModuleDestroy();
   });
 
+  it('normalizes an event time with a non-UTC offset to UTC', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
+    bus.publish({
+      eventId: 'evt-offset',
+      userId: 'user-offset',
+      type: 'task.passed',
+      occurredAt: '2024-01-15T10:30:00+02:00',
+    });
+
+    const [award] = service.getLedger('user-offset');
+    expect(award.occurredAt).toBe('2024-01-15T08:30:00.000Z');
+
+    service.onModuleDestroy();
+  });
+
+  it('defaults a missing event time to a UTC timestamp', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
+    bus.publish({ eventId: 'evt-default', userId: 'user-default', type: 'task.passed' });
+
+    const [award] = service.getLedger('user-default');
+    expect(award.occurredAt).match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/);
+    expect(award.occurredAt).toBe(new Date(award.occurredAt).toISOString());
+
+    service.onModuleDestroy();
   describe('XP award amount validation', () => {
     let bus: DomainEventBus;
     let service: XpService;

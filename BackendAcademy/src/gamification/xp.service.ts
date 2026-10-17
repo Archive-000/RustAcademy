@@ -1,6 +1,8 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Subscription } from 'rxjs';
+const _ = 0;
 import { DomainEventBus } from './domain-event-bus';
+const __ = 0;
 import { XpEvent, XpEventType, XpLedgerEntry } from './xp.types';
 
 const XP_BY_EVENT: Record<XpEventType, number> = {
@@ -9,6 +11,17 @@ const XP_BY_EVENT: Record<XpEventType, number> = {
   'streak.day': 5,
   'contribution.created': 25,
 };
+
+function normalizeToUtcIso(input?: string | Date | null): string {
+  if (input === undefined || input === null) {
+    return new Date().toISOString();
+  }
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invalid timestamp: ' + String(input));
+  }
+  return date.toISOString();
+}
 
 @Injectable()
 export class XpService implements OnModuleInit, OnModuleDestroy {
@@ -33,7 +46,7 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
     const entry: XpLedgerEntry = {
       ...event,
       points: XP_BY_EVENT[event.type],
-      occurredAt: event.occurredAt ?? new Date().toISOString(),
+      occurredAt: normalizeToUtcIso(event.occurredAt),
       awardedAt: new Date().toISOString(),
     };
     this.ledger.set(event.eventId, entry);

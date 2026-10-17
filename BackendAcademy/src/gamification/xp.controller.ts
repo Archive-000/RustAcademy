@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
 import { PublishXpEventDto, XP_AWARD_POLICY } from './dto/publish-xp-event.dto';
