@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import * as express from 'express';
 import { AppModule } from './app.module';
 
 // Application entry point: creates the Nest app, applies global
@@ -26,6 +27,14 @@ async function bootstrap() {
   // paths for monitoring tools that expect them un-prefixed).
   app.setGlobalPrefix('api', { exclude: ['health'] });
 
+  const configService = app.get(ConfigService);
+  // Enforces a maximum request body size to prevent DoS attacks from
+  // oversized payloads. Defaults to 1MB; configurable via MAX_BODY_SIZE
+  // env var (e.g., '5mb', '10mb'). Requests exceeding this limit return
+  // HTTP 413 (Payload Too Large) with a clear error message.
+  const maxBodySize = configService.get<string>('MAX_BODY_SIZE', '1mb');
+  app.use(express.json({ limit: maxBodySize }));
+
   // Global validation pipe applied to all incoming request bodies/params:
   //  - whitelist: strips properties not defined on the target DTO
   //  - transform: converts payloads into instances of their DTO classes
@@ -38,8 +47,6 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-
-  const configService = app.get(ConfigService);
   // Swagger docs default to enabled unless explicitly turned off via
   // the SWAGGER_ENABLED env var.
   const swaggerEnabled = configService.get<string>('SWAGGER_ENABLED', 'true') === 'true';
