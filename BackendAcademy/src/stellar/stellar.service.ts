@@ -16,6 +16,17 @@ export class StellarService implements OnModuleInit {
     if (process.env.REWARD_POOL_SECRET) this.getRewardPoolKeypair();
   }
 
+  isValidPublicKey(publicKey: string): boolean {
+    return typeof publicKey === 'string' && StellarSdk.StrKey.canPublicKey(publicKey);
+  }
+
+  assertPublicKey(publicKey: string): string {
+    if (!this.isValidPublicKey(publicKey)) {
+      throw new Error('Invalid Stellar public key');
+    }
+    return publicKey;
+  }
+
   getRewardPoolKeypair(): StellarSdk.Keypair {
     const secret = process.env.REWARD_POOL_SECRET;
     if (!secret) throw new Error('REWARD_POOL_SECRET is not configured');

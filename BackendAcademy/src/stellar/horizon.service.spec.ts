@@ -16,7 +16,7 @@ describe('HorizonService', () => {
       asset_type: 'native',
       to: 'GDESTINATION',
     };
-    const call = jest.fn().mockResolvedValue({ records: [record] });
+    const call = jest.fn().mockResolved({ records: [record] });
     const cursor = jest.fn().mockReturnValue({ call });
     const limit = jest.fn().mockReturnValue({ cursor, call });
     const order = jest.fn().mockReturnValue({ limit });
@@ -36,5 +36,13 @@ describe('HorizonService', () => {
       transactionHash: 'transaction-hash',
     });
     expect(result.nextCursor).toBe('next-page-token');
+  });
+
+  it('rejects malformed public keys before issuing Horizon requests', async () => {
+    const operations = jest.fn();
+    const service = new HorizonService({ server: { operations } } as unknown as StellarService);
+
+    await expect(service.getHistory('not-a-valid-key')).rejects.toThrow(/Invalid Stellar public key/);
+    expect(operations).not.toHaveBeenCalled();
   });
 });
