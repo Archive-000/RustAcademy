@@ -38,6 +38,7 @@ const MAX_TEST_CASES = 10;
 const MAX_PARALLEL_RUNS = 4;
 const COMPILE_TIMEOUT_SECONDS = 10;
 const EXECUTION_TIMEOUT_SECONDS = 2;
+const CONTAINER_TIMEOUT_MS = 15_000;
 const COMPILE_SUCCESS_MARKER = "__RUSTACADEMY_WASM_COMPILE_SUCCESS__";
 
 @Injectable()
@@ -143,10 +144,10 @@ export class SandboxService {
     ]);
     const runnerCommand = [
       "IFS= read -r source_len",
-      'head -c "$source_len" > /tmp/main.rs',
+      "head -c \"$source_len\" > /tmp/main.rs",
       "IFS= read -r separator",
-      "IFS= read -r input_len",
-      'head -c "$input_len" > /tmp/stdin',
+      "IFS= read -r --input_len",
+      "head -c \"$input_len\" > /tmp/stdin",
       `timeout -k 1s ${COMPILE_TIMEOUT_SECONDS}s rustc --edition=2021 --target=wasm32-wasip1 --crate-type=bin -o /tmp/main.wasm /tmp/main.rs`,
       `printf '%s\\n' '${COMPILE_SUCCESS_MARKER}' >&2`,
       `timeout -k 1s ${EXECUTION_TIMEOUT_SECONDS}s wasmtime run --fuel 10000000 --max-memory-size 16777216 /tmp/main.wasm < /tmp/stdin`,
@@ -192,7 +193,7 @@ export class SandboxService {
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
-      }, 15_000);
+      }, CONTAINER_TIMEOUT_MS);
 
       const append = (target: "stdout" | "stderr", chunk: Buffer) => {
         outputBytes += chunk.length;

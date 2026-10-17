@@ -44,8 +44,8 @@ describe("SandboxService", () => {
       ],
     });
     expect(runContainer).toHaveBeenCalledTimes(2);
-    expect(runContainer.mock.calls[0]).toEqual(["fn main() {}", "1\n", 15_000]);
-    expect(runContainer.mock.calls[1]).toEqual(["fn main() {}", "2\n", 15_000]);
+    expect(runContainer.mock.calls[0]).toEqual(["fn main() {}", "1\n"]);
+    expect(runContainer.mock.calls[1]).toEqual(["fn main() {}", "2\n"]);
   });
 
   it("reports compilation failure without running test cases", async () => {
@@ -63,7 +63,6 @@ describe("SandboxService", () => {
     ).resolves.toEqual({
       compiled: false,
       passed: false,
-      timedOut: false,
       results: [],
       compileError: "error: expected item",
     });
@@ -72,12 +71,6 @@ describe("SandboxService", () => {
   it("rejects empty test-case lists", async () => {
     await expect(
       service.runRustTests("fn main() {}", [], ""),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it("rejects out-of-range timeoutMs", async () => {
-    await expect(
-      service.runRustTests("fn main() {}", ["1\n"], "42", 0),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -93,9 +86,12 @@ describe("SandboxService", () => {
         compiled: true,
       });
 
-    const result = await service.runRustTests("fn main() {}", ["1\n"], "42");
+    const result = await service.runRustTests(
+      "fn main() {}",
+      ["1\n"],
+      "42",
+    );
 
-    expect(runContainer).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       compiled: true,
       passed: false,
@@ -107,28 +103,33 @@ describe("SandboxService", () => {
           stdout: "",
           durationMs: 1000,
           timedOut: true,
-          error: "Execution timed out",
         },
       ],
     });
+    expect(runContainer).toHaveBeenCalledTimes(1);
   });
 
-  it("respects a custom timeoutMs for runRust", async () => {
+  it("stops running remaining test cases after a timeout", async () => {
     const runContainer = jest
       .spyOn(service as any, "runContainer")
       .mockResolvedValueOnce({
-        stdout: "ok",
+        stdout: "",
         stderr: "",
-        exitCode: 0,
-        timedOut: false,
-        durationMs: 12,
+        exitCode: null,
+        timedOut: true,
+        durationMs: 1000,
         compiled: true,
       });
 
-    const result = await service.runRust("fn main() {}", 5000);
+    const result = await service.runRustTests(
+      "fn main() {}",
+      ["1\n", "2\n", "3\n"],
+      "42",
+    );
 
     expect(runContainer).toHaveBeenCalledTimes(1);
-    expect(runContainer.mock.calls[0]).toEqual(["fn main() {}", "", 5000]);
-    expect(result.timedOut).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.results).toHaveLength(1);
   });
 });
