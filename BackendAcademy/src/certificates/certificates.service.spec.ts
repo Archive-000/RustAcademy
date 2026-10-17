@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { CertificatesController } from './certificates.controller';
 import { CertificatesService } from './certificates.service';
 
 /**
@@ -84,6 +85,65 @@ describe('CertificatesService (BE-042)', () => {
   });
 
   describe('eligibility', () => {
+    it('returns required tasks in a stable order independent of registration and grading order', () => {
+      const reverseOrder = new CertificatesService();
+      reverseOrder.registerCourse({
+        courseId: 'ownership-101',
+        taskIds: ['t2', 't1'],
+        minScore: 70,
+      });
+      reverseOrder.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't2', score: 90 });
+      reverseOrder.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't1', score: 80 });
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't1', score: 80 });
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't2', score: 90 });
+
+      const first = certificates.checkEligibility('alice', 'ownership-101');
+      const second = reverseOrder.checkEligibility('alice', 'ownership-101');
+
+      expect(first.tasks.map((result) => result.taskId)).toEqual(['t1', 't2']);
+      expect(second.tasks.map((result) => result.taskId)).toEqual(['t1', 't2']);
+      expect(first.tasks.map((result) => result.score)).toEqual(second.tasks.map((result) => result.score));
+      expect(first.averageScore).toBe(second.averageScore);
+    });
+
+    it('sets the issuance timestamp once and preserves it across eligibility retries', () => {
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't1', score: 80 });
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't2', score: 90 });
+
+      jest.useFakeTimers();
+      try {
+        jest.setSystemTime(new Date('2026-10-17T10:00:00.000Z'));
+        const first = certificates.checkEligibility('alice', 'ownership-101');
+        jest.setSystemTime(new Date('2026-10-17T11:00:00.000Z'));
+        const retry = certificates.checkEligibility('alice', 'ownership-101');
+
+        expect(first.issuedAt).toBe('2026-10-17T10:00:00.000Z');
+        expect(retry.issuedAt).toBe(first.issuedAt);
+        expect(retry.checkedAt).not.toBe(first.checkedAt);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('returns only public fields from certificate verification', () => {
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't1', score: 80 });
+      certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't2', score: 90 });
+      const controller = new CertificatesController(certificates);
+
+      const details = controller.verifyCertificate('alice', 'ownership-101');
+
+      expect(details).toEqual({
+        verified: true,
+        courseId: 'ownership-101',
+        status: 'eligible',
+        issuedAt: expect.any(String),
+        finalScore: 85,
+      });
+      expect(details).not.toHaveProperty('userId');
+      expect(details).not.toHaveProperty('tasks');
+      expect(details).not.toHaveProperty('reasons');
+    });
+
     it('is ineligible with no results at all', () => {
       const check = certificates.checkEligibility('alice', 'ownership-101');
 
@@ -140,6 +200,8 @@ describe('CertificatesService (BE-042)', () => {
 
   describe('minting-job batch view', () => {
     it('lists only learners whose every task passes', () => {
+      certificates.recordTaskResult({ userId: 'zara', courseId: 'ownership-101', taskId: 't1', score: 80 });
+      certificates.recordTaskResult({ userId: 'zara', courseId: 'ownership-101', taskId: 't2', score: 80 });
       certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't1', score: 80 });
       certificates.recordTaskResult({ userId: 'alice', courseId: 'ownership-101', taskId: 't2', score: 80 });
       certificates.recordTaskResult({ userId: 'bob', courseId: 'ownership-101', taskId: 't1', score: 80 });
@@ -148,7 +210,7 @@ describe('CertificatesService (BE-042)', () => {
 
       const eligible = certificates.listEligibleLearners('ownership-101');
 
-      expect(eligible.map((check) => check.userId)).toEqual(['alice']);
+      expect(eligible.map((check) => check.userId)).toEqual(['alice', 'zara']);
     });
   });
 });
